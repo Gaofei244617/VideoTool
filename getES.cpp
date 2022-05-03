@@ -11,9 +11,9 @@ extern "C"
 #include <libavformat/avformat.h>
 }
 
-void getES(const char* filename)
+void getES(const char *filename)
 {
-	AVFormatContext* pFormatContext = NULL;
+	AVFormatContext *pFormatContext = NULL;
 	avformat_open_input(&pFormatContext, filename, NULL, NULL);
 	if (avformat_find_stream_info(pFormatContext, NULL) < 0)
 	{
@@ -24,7 +24,7 @@ void getES(const char* filename)
 	std::string type;
 	for (int i = 0; i < pFormatContext->nb_streams; i++)
 	{
-		AVCodecParameters* pCodecParam = pFormatContext->streams[i]->codecpar;
+		AVCodecParameters *pCodecParam = pFormatContext->streams[i]->codecpar;
 		if (pCodecParam->codec_type == AVMEDIA_TYPE_VIDEO)
 		{
 			videoIdx = i;
@@ -40,10 +40,10 @@ void getES(const char* filename)
 		}
 	}
 
-	const char* fmt = type == "H264" ? "h264_mp4toannexb" : "hevc_mp4toannexb";
-	const AVBitStreamFilter* bsf = av_bsf_get_by_name(fmt);
+	const char *fmt = type == "H264" ? "h264_mp4toannexb" : "hevc_mp4toannexb";
+	const AVBitStreamFilter *bsf = av_bsf_get_by_name(fmt);
 
-	AVBSFContext* bsfCtx = NULL;
+	AVBSFContext *bsfCtx = NULL;
 	av_bsf_alloc(bsf, &bsfCtx);
 
 	avcodec_parameters_copy(bsfCtx->par_in, pFormatContext->streams[videoIdx]->codecpar);
@@ -52,7 +52,7 @@ void getES(const char* filename)
 	std::ofstream out("out.h265", std::ios::out | std::ios::binary);
 	std::ofstream len("out.len", std::ios::out | std::ios::binary);
 
-	AVPacket* pPacket = av_packet_alloc();
+	AVPacket *pPacket = av_packet_alloc();
 	while (av_read_frame(pFormatContext, pPacket) == 0)
 	{
 		if (pPacket->stream_index == videoIdx)
@@ -61,8 +61,8 @@ void getES(const char* filename)
 			{
 				while (av_bsf_receive_packet(bsfCtx, pPacket) == 0)
 				{
-					out.write((char*)pPacket->data, pPacket->size);
-					len.write((char*)&(pPacket->size), sizeof(pPacket->size));
+					out.write((char *)pPacket->data, pPacket->size);
+					len.write((char *)&(pPacket->size), sizeof(pPacket->size));
 				}
 			}
 		}
@@ -71,5 +71,7 @@ void getES(const char* filename)
 	av_packet_free(&pPacket);
 	out.close();
 	len.close();
-}
 
+	avio_closep(&pFormatContext->pb);
+	avformat_close_input(&pFormatContext);
+}
