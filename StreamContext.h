@@ -35,10 +35,15 @@ public:
 	~StreamContext();
 
 	void init(const std::string url);
+	void reset();
 	int readFrame(unsigned char* data);
 	VideoInfo info()const;
 
 protected:
+    void release();
+
+protected:
+    std::string url;
 	VideoInfo videoInfo;  // 视频流信息
 	int videoIdx = -1; // 视频流索引
 	AVFormatContext* pFormatContext = NULL;
@@ -54,14 +59,12 @@ StreamContext::StreamContext(const std::string url)
 
 StreamContext::~StreamContext()
 {
-	av_packet_free(&pPacket);
-	av_bsf_free(&bsfCtx);
-	avio_closep(&pFormatContext->pb);
-	avformat_close_input(&pFormatContext);
+	release();
 }
 
 void StreamContext::init(const std::string url)
 {
+	this->url = url;
 	if (avformat_open_input(&pFormatContext, url.c_str(), NULL, NULL) < 0)
 	{
 		throw "open url error";
@@ -119,6 +122,12 @@ void StreamContext::init(const std::string url)
 	pPacket = av_packet_alloc();
 }
 
+void StreamContext:: reset()
+{
+	release();
+	int(url);
+}
+
 int StreamContext::readFrame(unsigned char* data)
 {
 	while (av_read_frame(pFormatContext, pPacket) == 0)
@@ -150,3 +159,10 @@ VideoInfo StreamContext::info()const
 	return videoInfo;
 }
 
+void StreamContext::release()
+{
+	av_packet_free(&pPacket);
+	av_bsf_free(&bsfCtx);
+	avio_closep(&pFormatContext->pb);
+	avformat_close_input(&pFormatContext);
+}
