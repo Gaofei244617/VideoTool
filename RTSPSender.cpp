@@ -12,19 +12,20 @@ RTSPSender::~RTSPSender()
 	release();
 }
 
-int RTSPSender::init(const std::string& video, const std::string& url, std::function<void(double)> callback)
+int RTSPSender::init(const RTSPConfig& config)
 {
-	m_video = video;
-	m_url = url;
-	m_callback = callback;
+	m_video = config.video;
+	m_url = config.url;
+	m_loop = config.loop;
+	m_callback = config.callback;
 
-	if (!std::filesystem::exists(video))
+	if (!std::filesystem::exists(m_video))
 	{
 		return 10;
 	}
 
 	// 打开文件
-	int ret = avformat_open_input(&pInFmtCtx, video.c_str(), NULL, NULL);
+	int ret = avformat_open_input(&pInFmtCtx, m_video.c_str(), NULL, NULL);
 	if (ret < 0)
 	{
 		release();
@@ -40,7 +41,7 @@ int RTSPSender::init(const std::string& video, const std::string& url, std::func
 	}
 
 	// 视频流索引
-	for (int i = 0; i < pInFmtCtx->nb_streams; i++)
+	for (unsigned int i = 0; i < pInFmtCtx->nb_streams; i++)
 	{
 		if (pInFmtCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
 		{
@@ -55,11 +56,12 @@ int RTSPSender::init(const std::string& video, const std::string& url, std::func
 		return 40;
 	}
 
+	// 视频时长
 	int64_t d = pInFmtCtx->streams[m_videoIndex]->duration;
 	m_duration = av_q2d(pInFmtCtx->streams[m_videoIndex]->time_base) * d;
 
 	// 创建输出上下文
-	ret = avformat_alloc_output_context2(&pOutFmtCtx, NULL, "rtsp", url.c_str());
+	ret = avformat_alloc_output_context2(&pOutFmtCtx, NULL, "rtsp", m_url.c_str());
 	if (ret < 0)
 	{
 		release();
@@ -104,6 +106,15 @@ int RTSPSender::init(const std::string& video, const std::string& url, std::func
 
 int RTSPSender::start()
 {
+	double fps = av_q2d(pInFmtCtx->streams[m_videoIndex]->avg_frame_rate);   // 帧率
+	auto span = std::chrono::microseconds(int(1000 / fps * 1000));           // 帧间隔
+
+	// 时间基数
+	AVRational timeBase;
+	timeBase.num = 1000;
+	timeBase.den = int(fps * 1000 + 0.5);
+	AVRational otime = pOutFmtCtx->streams[m_videoIndex]->time_base;
+
 	// 写入头部信息
 	int ret = avformat_write_header(pOutFmtCtx, NULL);
 	if (ret < 0)
@@ -113,53 +124,60 @@ int RTSPSender::start()
 	}
 
 	int frameNum = 0; // 帧计数
-	double fps = av_q2d(pInFmtCtx->streams[m_videoIndex]->avg_frame_rate);
-	auto span = std::chrono::microseconds(int(1000 / fps * 1000)); // 帧间隔
-
 	AVPacket avPacket; // 推流每一帧数据
 	auto startTime = std::chrono::high_resolution_clock::now();
-	while (true)
+	for (int i = 0; i < m_loop; i++)
 	{
-		ret = av_read_frame(pInFmtCtx, &avPacket);
-		if (ret < 0) // 读完视频
+		while (true)
 		{
-			release();
-			return 210;
+			ret = av_read_frame(pInFmtCtx, &avPacket);
+			if (ret == AVERROR_EOF)
+			{
+				break;
+			}
+
+			if (avPacket.stream_index != m_videoIndex)
+			{
+				continue;
+			}
+
+			// 计算转换时间戳
+			avPacket.pts = av_rescale_q_rnd(frameNum, timeBase, otime, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_NEAR_INF));
+			avPacket.dts = avPacket.pts;
+			avPacket.duration = 0;
+			avPacket.pos = -1;
+
+			// 控制推帧速度
+			std::this_thread::sleep_until(startTime + span * frameNum);
+
+			// 推帧
+			ret = av_interleaved_write_frame(pOutFmtCtx, &avPacket);
+			if (ret < 0)
+			{
+				break;
+			}
+
+			frameNum++;
+
+			// 推流进度
+			if (m_callback)
+			{
+				m_callback(frameNum * 1.0 / fps / m_duration);
+			}
 		}
 
-		if (avPacket.stream_index != m_videoIndex)
-		{
-			continue;
-		}
-
-		// 获取时间基数
-		AVRational itime = pInFmtCtx->streams[avPacket.stream_index]->time_base;
-		AVRational otime = pOutFmtCtx->streams[avPacket.stream_index]->time_base;
-
-		// 计算转换时间戳
-		avPacket.pts = av_rescale_q_rnd(avPacket.pts, itime, otime, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_NEAR_INF));
-		avPacket.dts = av_rescale_q_rnd(avPacket.dts, itime, otime, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_NEAR_INF));
-		avPacket.duration = av_rescale_q_rnd(avPacket.duration, itime, otime, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_NEAR_INF));
-		avPacket.pos = -1;
-
-		// 控制推帧速度
-		std::this_thread::sleep_until(startTime + span * frameNum);
-
-		// 推帧
-		ret = av_interleaved_write_frame(pOutFmtCtx, &avPacket);
+		// 重新打开文件
+		avio_closep(&pInFmtCtx->pb);
+		avformat_close_input(&pInFmtCtx);
+		ret = avformat_open_input(&pInFmtCtx, m_video.c_str(), NULL, NULL);
 		if (ret < 0)
 		{
-			break;
-		}
-
-		frameNum++;
-
-		// 推流进度
-		if (m_callback)
-		{
-			m_callback(frameNum * 1.0 / fps / m_duration);
+			release();
+			return 20;
 		}
 	}
+
+	release();
 
 	return 0;
 }
