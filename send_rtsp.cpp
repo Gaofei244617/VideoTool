@@ -9,16 +9,21 @@ int send_rtsp(const RTSPConfig& config)
 		return 10;
 	}
 
+	VideoInfo videoInfo = GetVideoInfo(config.video); // 视频信息
+	if (videoInfo.video_index == -1)
+	{
+		// 没有视频流
+		return 20;
+	}
+
 	AVFormatContext* pInFmtCtx = NULL;      // 输入流
 	AVFormatContext* pOutFmtCtx = NULL;     // 输出流
 	AVStream* pOutStream = NULL;            // 输出视频流
 	AVCodec* pCodec = NULL;                 // 解码器
 
 	int frameNum = 0;       // 帧计数
-	int videoIndex = -1;    // 视频索引
 	int ret = 0;            // 错误码
 
-	VideoInfo videoInfo = GetVideoInfo(config.video); // 视频信息
 	auto span = std::chrono::microseconds(int(1000 / videoInfo.fps * 1000)); // 帧间隔
 	decltype(std::chrono::high_resolution_clock::now()) startTime; // 开始推流时间
 
@@ -26,29 +31,13 @@ int send_rtsp(const RTSPConfig& config)
 	ret = avformat_open_input(&pInFmtCtx, config.video.c_str(), NULL, NULL);
 	if (ret < 0)
 	{
-		ret = 20;
+		ret = 30;
 		goto end;
 	}
 
 	// 获取流信息
 	ret = avformat_find_stream_info(pInFmtCtx, NULL);
 	if (ret != 0)
-	{
-		ret = 30;
-		goto end;
-	}
-
-	// 视频流索引
-	for (unsigned int i = 0; i < pInFmtCtx->nb_streams; i++)
-	{
-		if (pInFmtCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-		{
-			videoIndex = i;
-			break;
-		}
-	}
-
-	if (videoIndex == -1)
 	{
 		ret = 40;
 		goto end;
@@ -78,7 +67,7 @@ int send_rtsp(const RTSPConfig& config)
 	}
 
 	// 复制配置信息
-	ret = avcodec_parameters_copy(pOutStream->codecpar, pInFmtCtx->streams[videoIndex]->codecpar);
+	ret = avcodec_parameters_copy(pOutStream->codecpar, pInFmtCtx->streams[videoInfo.video_index]->codecpar);
 	if (ret < 0)
 	{
 		ret = 80;
@@ -99,7 +88,7 @@ int send_rtsp(const RTSPConfig& config)
 	{
 		// 时间基数
 		AVRational timeBase = av_make_q(1000, int(videoInfo.fps * 1000 + 0.5));
-		AVRational otime = pOutFmtCtx->streams[videoIndex]->time_base;
+		AVRational otime = pOutFmtCtx->streams[videoInfo.video_index]->time_base;
 
 		AVPacket avPacket;
 		while (true)
@@ -110,7 +99,7 @@ int send_rtsp(const RTSPConfig& config)
 				break;
 			}
 
-			if (avPacket.stream_index == videoIndex)
+			if (avPacket.stream_index == videoInfo.video_index)
 			{
 				// 计算转换时间戳
 				avPacket.pts = av_rescale_q_rnd(frameNum, timeBase, otime, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_NEAR_INF));
