@@ -11,7 +11,7 @@ extern "C"
 #include <libavformat/avformat.h>
 }
 
-void getES(const char *filename)
+void video_to_es(const char *filename)
 {
 	AVFormatContext *pFormatContext = NULL;
 	avformat_open_input(&pFormatContext, filename, NULL, NULL);
