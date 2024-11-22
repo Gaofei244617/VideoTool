@@ -18,7 +18,8 @@ struct VideoInfo
 	int width = 0;           // 画面宽度
 	int height = 0;          // 画面高度
 	int stream_num = 0;      // 流数量
-	EncodeType encode;       // 编码格式
+	int video_index = -1;    // 视频流索引
+	EncodeType encode;       // 视频流编码格式
 };
 
 VideoInfo GetVideoInfo(const std::string& video);

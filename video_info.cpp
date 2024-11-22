@@ -13,7 +13,6 @@ VideoInfo GetVideoInfo(const std::string& video)
 	AVFormatContext* pInFmtCtx = NULL;
 	AVStream* pVideoStream = NULL;
 	AVCodecParameters* codecpar = NULL;
-	int videoIndex = -1;                 // ÊÓÆµÁ÷Ë÷Òý
 
 	info.url = video;
 	info.size = std::filesystem::file_size(video);
@@ -37,7 +36,7 @@ VideoInfo GetVideoInfo(const std::string& video)
 	{
 		if (pInFmtCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
 		{
-			videoIndex = i;
+			info.video_index = i;
 			codecpar = pInFmtCtx->streams[i]->codecpar;
 			pVideoStream = pInFmtCtx->streams[i];
 
@@ -45,7 +44,7 @@ VideoInfo GetVideoInfo(const std::string& video)
 		}
 	}
 
-	if (videoIndex == -1)
+	if (info.video_index == -1)
 	{
 		goto end;
 	}
